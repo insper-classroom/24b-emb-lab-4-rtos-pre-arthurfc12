@@ -13,21 +13,43 @@ const int LED_PIN_R = 4;
 const int LED_PIN_G = 6;
 
 QueueHandle_t xQueueButId;
-QueueHandle_t xQueueButIdG;
-SemaphoreHandle_t xSemaphore_r;
-SemaphoreHandle_t xSemaphore_g;
+QueueHandle_t xQueueButId2;
 
 // Callback do botão vermelho (BTN_PIN_R)
 void btn_callback_r(uint gpio, uint32_t events) {
-    if (events == 0x4) { // fall edge
-        xSemaphoreGiveFromISR(xSemaphore_r, 0);
+    static int delay_r = 100;
+    
+    // A interrupção é disparada na borda de descida (falling edge)
+    if (gpio == BTN_PIN_R && events == GPIO_IRQ_EDGE_FALL) {
+        // Aumenta o delay até 1000ms e depois reinicia para 100ms
+        if (delay_r < 1000) {
+            delay_r += 100;
+        } else {
+            delay_r = 100;
+        }
+
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xQueueSendFromISR(xQueueButId, &delay_r, &xHigherPriorityTaskWoken);
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
 }
 
 // Callback do botão verde (BTN_PIN_G)
 void btn_callback_g(uint gpio, uint32_t events) {
-    if (events == 0x4) { // fall edge
-        xSemaphoreGiveFromISR(xSemaphore_g, 0);
+    static int delay_g = 100;
+
+    // A interrupção é disparada na borda de descida (falling edge)
+    if (gpio == BTN_PIN_G && events == GPIO_IRQ_EDGE_FALL) {
+        // Aumenta o delay até 1000ms e depois reinicia para 100ms
+        if (delay_g < 1000) {
+            delay_g += 100;
+        } else {
+            delay_g = 100;
+        }
+
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        xQueueSendFromISR(xQueueButId2, &delay_g, &xHigherPriorityTaskWoken);
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
     }
 }
 
@@ -37,9 +59,8 @@ void led_1_task(void *p) {
     gpio_set_dir(LED_PIN_R, GPIO_OUT);
 
     int delay = 0;
-
     while (true) {
-        if (xQueueReceive(xQueueButId, &delay, 0)) {
+        if (xQueueReceive(xQueueButId, &delay, portMAX_DELAY)) {
             printf("LED R delay: %d\n", delay);
         }
 
@@ -52,36 +73,14 @@ void led_1_task(void *p) {
     }
 }
 
-// Task para controle do botão vermelho (BTN_PIN_R)
-void btn_1_task(void *p) {
-    gpio_init(BTN_PIN_R);
-    gpio_set_dir(BTN_PIN_R, GPIO_IN);
-    gpio_pull_up(BTN_PIN_R);
-    gpio_set_irq_enabled_with_callback(BTN_PIN_R, GPIO_IRQ_EDGE_FALL, true, &btn_callback_r);
-
-    int delay = 0;
-    while (true) {
-        if (xSemaphoreTake(xSemaphore_r, pdMS_TO_TICKS(500)) == pdTRUE) {
-            if (delay < 1000) {
-                delay += 100;
-            } else {
-                delay = 100;
-            }
-            printf("BTN R delay: %d\n", delay);
-            xQueueSend(xQueueButId, &delay, 0);
-        }
-    }
-}
-
 // Task para controle do LED verde (LED_PIN_G)
 void led_2_task(void *p) {
     gpio_init(LED_PIN_G);
     gpio_set_dir(LED_PIN_G, GPIO_OUT);
 
     int delay = 0;
-
     while (true) {
-        if (xQueueReceive(xQueueButIdG, &delay, 0)) {
+        if (xQueueReceive(xQueueButId2, &delay, portMAX_DELAY)) {
             printf("LED G delay: %d\n", delay);
         }
 
@@ -94,42 +93,28 @@ void led_2_task(void *p) {
     }
 }
 
-// Task para controle do botão verde (BTN_PIN_G)
-void btn_2_task(void *p) {
+int main() {
+    stdio_init_all();
+    printf("Start RTOS \n");
+
+    // Criação das filas
+    xQueueButId = xQueueCreate(32, sizeof(int));
+    xQueueButId2 = xQueueCreate(32, sizeof(int));
+
+    // Configuração das interrupções dos botões
+    gpio_init(BTN_PIN_R);
+    gpio_set_dir(BTN_PIN_R, GPIO_IN);
+    gpio_pull_up(BTN_PIN_R);
+    gpio_set_irq_enabled_with_callback(BTN_PIN_R, GPIO_IRQ_EDGE_FALL, true, &btn_callback_r);
+
     gpio_init(BTN_PIN_G);
     gpio_set_dir(BTN_PIN_G, GPIO_IN);
     gpio_pull_up(BTN_PIN_G);
     gpio_set_irq_enabled_with_callback(BTN_PIN_G, GPIO_IRQ_EDGE_FALL, true, &btn_callback_g);
 
-    int delay = 0;
-    while (true) {
-        if (xSemaphoreTake(xSemaphore_g, pdMS_TO_TICKS(500)) == pdTRUE) {
-            if (delay < 1000) {
-                delay += 100;
-            } else {
-                delay = 100;
-            }
-            printf("BTN G delay: %d\n", delay);
-            xQueueSend(xQueueButIdG, &delay, 0);
-        }
-    }
-}
-
-int main() {
-    stdio_init_all();
-    printf("Start RTOS \n");
-
-    // Criação das filas e semáforos
-    xQueueButId = xQueueCreate(32, sizeof(int));
-    xQueueButIdG = xQueueCreate(32, sizeof(int));
-    xSemaphore_r = xSemaphoreCreateBinary();
-    xSemaphore_g = xSemaphoreCreateBinary();
-
-    // Criação das tasks
+    // Criação das tasks para os LEDs
     xTaskCreate(led_1_task, "LED_Task 1", 256, NULL, 1, NULL);
-    xTaskCreate(btn_1_task, "BTN_Task 1", 256, NULL, 1, NULL);
     xTaskCreate(led_2_task, "LED_Task 2", 256, NULL, 1, NULL);
-    xTaskCreate(btn_2_task, "BTN_Task 2", 256, NULL, 1, NULL);
 
     // Inicia o agendador
     vTaskStartScheduler();
